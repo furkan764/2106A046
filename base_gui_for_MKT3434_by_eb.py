@@ -6,7 +6,7 @@ from PyQt6.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout,
                            QComboBox, QFileDialog, QSpinBox, QDoubleSpinBox,
                            QGroupBox, QScrollArea, QTextEdit, QStatusBar,
                            QProgressBar, QCheckBox, QGridLayout, QMessageBox,
-                           QDialog, QLineEdit)
+                           QDialog, QLineEdit,QInputDialog)
 from PyQt6.QtCore import Qt
 import matplotlib.pyplot as plt
 from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
@@ -14,15 +14,17 @@ from matplotlib.figure import Figure
 from sklearn import datasets, preprocessing, model_selection
 from sklearn.linear_model import LinearRegression, LogisticRegression
 from sklearn.naive_bayes import GaussianNB
-from sklearn.svm import SVC
+from sklearn.svm import SVC, SVR
 from sklearn.tree import DecisionTreeClassifier
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.neighbors import KNeighborsClassifier
 from sklearn.cluster import KMeans
 from sklearn.decomposition import PCA
-from sklearn.metrics import accuracy_score, mean_squared_error, confusion_matrix
+from sklearn.metrics import accuracy_score, mean_squared_error,mean_absolute_error, confusion_matrix, log_loss, hinge_loss, r2_score
 import tensorflow as tf
-from tensorflow.keras import layers, models, optimizers
+from tensorflow.keras import layers, models, optimizers # type: ignore
+from sklearn.impute import SimpleImputer
+
 
 class MLCourseGUI(QMainWindow):
     def __init__(self):
@@ -50,6 +52,7 @@ class MLCourseGUI(QMainWindow):
         self.create_tabs()
         self.create_visualization()
         self.create_status_bar()
+
     def load_dataset(self):
         """Load selected dataset"""
         try:
@@ -65,8 +68,8 @@ class MLCourseGUI(QMainWindow):
                 data = datasets.load_breast_cancer()
             elif dataset_name == "Digits Dataset":
                 data = datasets.load_digits()
-            elif dataset_name == "Boston Housing Dataset":
-                data = datasets.load_boston()
+            elif dataset_name == "California Housing Dataset":
+                data = datasets.fetch_california_housing()
             elif dataset_name == "MNIST Dataset":
                 (X_train, y_train), (X_test, y_test) = tf.keras.datasets.mnist.load_data()
                 self.X_train, self.X_test = X_train, X_test
@@ -82,8 +85,9 @@ class MLCourseGUI(QMainWindow):
                                               random_state=42)
             
             # Apply scaling if selected
+            self.apply_missing_value_strategy()
             self.apply_scaling()
-            
+
             self.status_bar.showMessage(f"Loaded {dataset_name}")
             
         except Exception as e:
@@ -118,8 +122,14 @@ class MLCourseGUI(QMainWindow):
                                                       random_state=42)
                     
                     # Apply scaling if selected
+                    self.apply_missing_value_strategy()
                     self.apply_scaling()
-                    
+                    # Bu durumda numpy array'e çeviriyoruz.
+                    if isinstance(self.X_train, pd.DataFrame):
+                        self.X_train = self.X_train.values
+                    if isinstance(self.X_test, pd.DataFrame):
+                        self.X_test = self.X_test.values
+                        
                     self.status_bar.showMessage(f"Loaded custom dataset: {file_name}")
                     
         except Exception as e:
@@ -161,6 +171,7 @@ class MLCourseGUI(QMainWindow):
                 
             except Exception as e:
                 self.show_error(f"Error applying scaling: {str(e)}")
+    
     def create_data_section(self):
         """Create the data loading and preprocessing section"""
         data_group = QGroupBox("Data Management")
@@ -173,7 +184,7 @@ class MLCourseGUI(QMainWindow):
             "Iris Dataset",
             "Breast Cancer Dataset",
             "Digits Dataset",
-            "Boston Housing Dataset",
+            "California Housing Dataset",  # updated
             "MNIST Dataset"
         ])
         self.dataset_combo.currentIndexChanged.connect(self.load_dataset)
@@ -181,6 +192,10 @@ class MLCourseGUI(QMainWindow):
         # Data loading button
         self.load_btn = QPushButton("Load Data")
         self.load_btn.clicked.connect(self.load_custom_data)
+        
+        # Dataset visualization button
+        self.plot_btn = QPushButton("Visualize Data")
+        self.plot_btn.clicked.connect(self.plot_dataset)
         
         # Preprocessing options
         self.scaling_combo = QComboBox()
@@ -193,22 +208,40 @@ class MLCourseGUI(QMainWindow):
         
         # Train-test split options
         self.split_spin = QDoubleSpinBox()
-        self.split_spin.setRange(0.1, 0.9)
-        self.split_spin.setValue(0.2)
+        self.split_spin.setRange(0.01, 0.9)
+        self.split_spin.setValue(0.1)
         self.split_spin.setSingleStep(0.1)
         
+        # Eksik veri işleme seçenekleri
+        self.imputation_combo = QComboBox()
+        self.imputation_combo.addItems([
+            "No Imputation",
+            "Mean Imputation",  
+            "Median Imputation",
+            "Mode Imputation",
+            "Interpolation",
+            "Forward Fill",
+            "Backward Fill"
+        ])
+
+
+
         # Add widgets to layout
         data_layout.addWidget(QLabel("Dataset:"))
         data_layout.addWidget(self.dataset_combo)
         data_layout.addWidget(self.load_btn)
+        data_layout.addWidget(self.plot_btn)
         data_layout.addWidget(QLabel("Scaling:"))
         data_layout.addWidget(self.scaling_combo)
         data_layout.addWidget(QLabel("Test Split:"))
         data_layout.addWidget(self.split_spin)
+        data_layout.addWidget(QLabel("Missing Value Strategy:"))
+        data_layout.addWidget(self.imputation_combo)
+
         
         data_group.setLayout(data_layout)
         self.layout.addWidget(data_group)
-    
+ 
     def create_tabs(self):
         """Create tabs for different ML topics"""
         self.tab_widget = QTabWidget()
@@ -243,7 +276,8 @@ class MLCourseGUI(QMainWindow):
         lr_group = self.create_algorithm_group(
             "Linear Regression",
             {"fit_intercept": "checkbox",
-             "normalize": "checkbox"}
+             "loss function": ["MSE (Mean Squared Error)", "MAE (Mean Absolute Error)", "Huber Loss"]}
+
         )
         regression_layout.addWidget(lr_group)
         
@@ -252,7 +286,8 @@ class MLCourseGUI(QMainWindow):
             "Logistic Regression",
             {"C": "double",
              "max_iter": "int",
-             "multi_class": ["ovr", "multinomial"]}
+             "multi_class": ["ovr", "multinomial"],
+             "loss function": ["Cross-Entropy", "Hinge Loss"]}
         )
         regression_layout.addWidget(logistic_group)
         
@@ -266,16 +301,21 @@ class MLCourseGUI(QMainWindow):
         # Naive Bayes
         nb_group = self.create_algorithm_group(
             "Naive Bayes",
-            {"var_smoothing": "double"}
+            {"var_smoothing": "double", "Prior Probabilities": ["Uniform", "User-defined"]}
         )
+
         classification_layout.addWidget(nb_group)
         
         # SVM
         svm_group = self.create_algorithm_group(
             "Support Vector Machine",
-            {"C": "double",
+            {"Model Type": ["SVC (Classification)", "SVR (Regression)"],
+             "C": "double",
              "kernel": ["linear", "rbf", "poly"],
-             "degree": "int"}
+             "degree": "int",
+             "loss function for SVC": ["Cross-Entropy", "Hinge Loss"],
+             "loss function for SVR": ["MSE (Mean Squared Error)", "MAE (Mean Absolute Error)", "Huber Loss"],
+             "epsilon for SVR": "double"}
         )
         classification_layout.addWidget(svm_group)
         
@@ -390,13 +430,19 @@ class MLCourseGUI(QMainWindow):
         viz_layout = QHBoxLayout()
         
         # Create matplotlib figure
-        self.figure = Figure(figsize=(8, 6))
+        self.figure = Figure(figsize=(6, 4), constrained_layout=True)
         self.canvas = FigureCanvas(self.figure)
         viz_layout.addWidget(self.canvas)
+
+        # Yeni ikinci canvas (tahmin sonuçları için)
+        self.prediction_figure = Figure(figsize=(6, 4))
+        self.prediction_canvas = FigureCanvas(self.prediction_figure)
+        viz_layout.addWidget(self.prediction_canvas)
         
         # Metrics display
         self.metrics_text = QTextEdit()
         self.metrics_text.setReadOnly(True)
+        self.metrics_text.setMaximumWidth(180)
         viz_layout.addWidget(self.metrics_text)
         
         viz_group.setLayout(viz_layout)
@@ -415,13 +461,17 @@ class MLCourseGUI(QMainWindow):
         """Helper method to create algorithm parameter groups"""
         group = QGroupBox(name)
         layout = QVBoxLayout()
-        
-        # Create parameter inputs
+
+        # Erişim için bir sözlük ekleyelim
+        if not hasattr(self, "widgets_dict"):
+            self.widgets_dict = {}
+
+        # Her parametre için uygun widget'ı oluştur
         param_widgets = {}
         for param_name, param_type in params.items():
             param_layout = QHBoxLayout()
             param_layout.addWidget(QLabel(f"{param_name}:"))
-            
+
             if param_type == "int":
                 widget = QSpinBox()
                 widget.setRange(1, 1000)
@@ -434,16 +484,33 @@ class MLCourseGUI(QMainWindow):
             elif isinstance(param_type, list):
                 widget = QComboBox()
                 widget.addItems(param_type)
-            
+
             param_layout.addWidget(widget)
             param_widgets[param_name] = widget
             layout.addLayout(param_layout)
-        
-        # Add train button
+
+        # Oluşturulan widget'ları self.widgets_dict içine kaydet
+        self.widgets_dict[name] = param_widgets
+
+        train_function_map = {
+            "Linear Regression": self.train_linear_regression,
+            "Logistic Regression": self.train_logistic_regression,
+            "Naive Bayes": self.train_gaussian_nb,
+            "Support Vector Machine": self.train_svm,
+            # "Decision Tree": lambda: self.train_model("Decision Tree"),
+            # "Random Forest": lambda: self.train_model("Random Forest"),
+            # "K-Nearest Neighbors": lambda: self.train_model("K-Nearest Neighbors"),
+            # "K-Means Clustering": lambda: self.train_model("K-Means Clustering"),
+            # "PCA": lambda: self.train_model("PCA")
+        }
+
+        # Eğitme butonu ekleyelim ve fonksiyona bağlayalım
         train_btn = QPushButton(f"Train {name}")
-        train_btn.clicked.connect(lambda: self.train_model(name, param_widgets))
+
+        # Eğer model özel bir fonksiyon içeriyorsa, onu çağır
+        train_btn.clicked.connect(train_function_map.get(name, lambda: self.show_error(f"Training function not found for {name}")))
+
         layout.addWidget(train_btn)
-        
         group.setLayout(layout)
         return group
 
@@ -756,8 +823,6 @@ class MLCourseGUI(QMainWindow):
         model.add(layers.Dense(num_classes, activation='softmax'))
                 
         return model
-
-   
         
     def train_neural_network(self):
         """Train the neural network"""
@@ -804,59 +869,32 @@ class MLCourseGUI(QMainWindow):
         
     def update_visualization(self, y_pred):
         """Update the visualization with current results"""
-        self.figure.clear()
-        
-        # Create appropriate visualization based on data
+
+        self.prediction_figure.clear()
+        ax = self.prediction_figure.add_subplot(111)
+
         if len(np.unique(self.y_test)) > 10:  # Regression
-            ax = self.figure.add_subplot(111)
             ax.scatter(self.y_test, y_pred)
             ax.plot([self.y_test.min(), self.y_test.max()],
-                   [self.y_test.min(), self.y_test.max()],
-                   'r--', lw=2)
+                    [self.y_test.min(), self.y_test.max()],
+                    'r--', lw=2)
             ax.set_xlabel("Actual Values")
             ax.set_ylabel("Predicted Values")
-            
+            ax.set_title("Regression Prediction vs Actual")
         else:  # Classification
-            if self.X_train.shape[1] > 2:  # Use PCA for visualization
+            if self.X_test.shape[1] > 2:
                 pca = PCA(n_components=2)
                 X_test_2d = pca.fit_transform(self.X_test)
-                
-                ax = self.figure.add_subplot(111)
                 scatter = ax.scatter(X_test_2d[:, 0], X_test_2d[:, 1],
-                                   c=y_pred, cmap='viridis')
-                self.figure.colorbar(scatter)
-                
-            else:  # Direct 2D visualization
-                ax = self.figure.add_subplot(111)
+                                     c=y_pred, cmap='viridis')
+                self.prediction_figure.colorbar(scatter)
+            else:
                 scatter = ax.scatter(self.X_test[:, 0], self.X_test[:, 1],
-                                   c=y_pred, cmap='viridis')
-                self.figure.colorbar(scatter)
-        
-        self.canvas.draw()
-        
-    def update_metrics(self, y_pred):
-        """Update metrics display"""
-        metrics_text = "Model Performance Metrics:\n\n"
-        
-        # Calculate appropriate metrics based on problem type
-        if len(np.unique(self.y_test)) > 10:  # Regression
-            mse = mean_squared_error(self.y_test, y_pred)
-            rmse = np.sqrt(mse)
-            r2 = self.current_model.score(self.X_test, self.y_test)
-            
-            metrics_text += f"Mean Squared Error: {mse:.4f}\n"
-            metrics_text += f"Root Mean Squared Error: {rmse:.4f}\n"
-            metrics_text += f"R² Score: {r2:.4f}"
-            
-        else:  # Classification
-            accuracy = accuracy_score(self.y_test, y_pred)
-            conf_matrix = confusion_matrix(self.y_test, y_pred)
-            
-            metrics_text += f"Accuracy: {accuracy:.4f}\n\n"
-            metrics_text += "Confusion Matrix:\n"
-            metrics_text += str(conf_matrix)
-        
-        self.metrics_text.setText(metrics_text)
+                                     c=y_pred, cmap='viridis')
+                self.prediction_figure.colorbar(scatter)
+            ax.set_title("Classification Prediction")
+
+        self.prediction_canvas.draw()
         
     def plot_training_history(self, history):
         """Plot neural network training history"""
@@ -883,9 +921,326 @@ class MLCourseGUI(QMainWindow):
         self.figure.tight_layout()
         self.canvas.draw()
         
-    def show_error(self, message):
-        """Show error message dialog"""
-        QMessageBox.critical(self, "Error", message)
+    # FUNCTIONS ADDED BY ME
+    def plot_dataset(self):
+        """Plot the loaded dataset, skipping rows with NaN."""
+        if self.X_train is None or self.y_train is None:
+            self.show_error("No dataset loaded! Please load a dataset.")
+            return
+
+        try:
+            X = np.array(self.X_train)
+            y = np.array(self.y_train)
+
+            # y tek boyutlu değilse flatten et
+            if y.ndim > 1:
+                y = y.ravel()
+
+            # Hem X hem y'de NaN olmayan satırları seç
+            mask_X = ~np.isnan(X).any(axis=1)
+            mask_y = ~np.isnan(y)
+            mask = mask_X & mask_y
+
+            X = X[mask]
+            y = y[mask]
+
+            self.figure.clear()
+            ax = self.figure.add_subplot(111)
+
+            self.prediction_figure.clear()
+            self.prediction_canvas.draw()
+
+            if X.shape[1] == 2:
+                scatter = ax.scatter(X[:, 0], X[:, 1], c=y, cmap='viridis', edgecolors='k')
+                self.figure.colorbar(scatter)
+                ax.set_xlabel("Feature 1")
+                ax.set_ylabel("Feature 2")
+                ax.set_title("Dataset Visualization")
+
+            elif X.shape[1] > 2:
+                pca = PCA(n_components=2)
+                X_pca = pca.fit_transform(X)
+                scatter = ax.scatter(X_pca[:, 0], X_pca[:, 1], c=y, cmap='viridis', edgecolors='k')
+                self.figure.colorbar(scatter)
+                ax.set_xlabel("PCA Component 1")
+                ax.set_ylabel("PCA Component 2")
+                ax.set_title("Dataset Visualization (PCA Reduced)")
+
+            else:
+                ax.plot(X, y, "bo")
+                ax.set_xlabel("X")
+                ax.set_ylabel("Y")
+                ax.set_title("Dataset Visualization")
+
+            self.canvas.draw()
+
+        except Exception as e:
+            self.show_error(f"Error during dataset visualization: {str(e)}")
+
+    def huber_loss(self, y_pred, y, delta=1.0):
+        huber_mse = 0.5 * (y - y_pred)**2
+        huber_mae = delta * (np.abs(y - y_pred) - 0.5 * delta)
+        return np.where(np.abs(y - y_pred) <= delta, huber_mse, huber_mae)
+    
+    def train_linear_regression(self):
+        """Train and evaluate Linear Regression"""
+        if self.X_train is None or self.y_train is None:
+            self.show_error("No dataset loaded! Please load a dataset first.")
+            return
+
+        try:
+            # Dinamik olarak erişim sağlayalım
+            lr_params = self.widgets_dict.get("Linear Regression", {})
+
+            fit_intercept = lr_params["fit_intercept"].isChecked()
+            selected_loss = lr_params["loss function"].currentText()
+
+            # Modeli oluştur ve eğit
+            model = LinearRegression(fit_intercept=fit_intercept)
+            self.current_model = model
+            model.fit(self.X_train, self.y_train)
+
+            # Tahminleri al
+            y_pred = model.predict(self.X_test)
+
+            # Seçili loss fonksiyonuna göre hesaplama yap
+            if "MSE" in selected_loss:
+                loss_value = mean_squared_error(self.y_test, y_pred)
+                loss_name = "Mean Squared Error"
+            elif "MAE" in selected_loss:
+                loss_value = np.mean(np.abs(self.y_test - y_pred))
+                loss_name = "Mean Absolute Error"
+            elif "Huber" in selected_loss:
+                loss_value = np.mean(self.huber_loss(y_pred, self.y_test, delta=1.0))
+                loss_name = "Huber Loss"
+
+            accuracy = r2_score(self.y_test, y_pred)
+
+            # Sonuçları GUI'ye yazdır
+            self.metrics_text.setText(f"{loss_name}: {loss_value:.4f}\nR² Score: {accuracy:.4f}")
+            self.update_visualization(y_pred)
+
+        except Exception as e:
+            self.show_error(f"Error training Linear Regression: {str(e)}")
+            print(f"Error: {str(e)}")
+
+    def train_logistic_regression(self):
+        """Train and evaluate Logistic Regression with Cross-Entropy Loss"""
+        if self.X_train is None or self.y_train is None:
+            self.show_error("No dataset loaded! Please load a dataset first.")
+            return
+
+        try:
+            
+            # parametreleri al
+            lr_params = self.widgets_dict.get("Logistic Regression", {})
+
+            if "C" in lr_params:
+                C_value = lr_params["C"].value()
+            else:
+                C_value = 1.0 
+            if "max_iter" in lr_params:
+                max_iter_value = lr_params["max_iter"].value()
+            else:
+                max_iter_value = 100
+            if "multi_class" in lr_params:
+                multi_class_value = lr_params["multi_class"].currentText()
+            else:
+                multi_class_value = "ovr"
+            if "loss function" in lr_params:
+                selected_loss = lr_params["loss function"].currentText()
+            else:
+                selected_loss = "Cross-Entropy"
+
+            model = LogisticRegression(C=C_value, max_iter=max_iter_value, multi_class=multi_class_value)
+            self.current_model = model
+            model.fit(self.X_train, self.y_train)
+            y_pred_prob = model.predict_proba(self.X_test)
+            y_pred = model.predict(self.X_test)
+
+            # Seçili loss fonksiyonuna göre hesaplama yap
+            if "Cross-Entropy" in selected_loss:
+                loss_value = log_loss(self.y_test, y_pred_prob)
+                loss_name = "Cross-Entropy Loss"
+            else: # "Hinge" 
+                # Hinge Loss için etiketlerin {-1, 1} olması gerekiyor
+                y_test_hinge = np.where(self.y_test == 1, 1, -1)  
+                y_decision = model.decision_function(self.X_test)  # Decision scores
+                loss_value = hinge_loss(y_test_hinge, y_decision)
+                loss_name = "Hinge Loss"
+
+            # Accuracy hesapla
+            accuracy = accuracy_score(self.y_test, y_pred)
+            self.metrics_text.setText(f"{loss_name}: {loss_value:.4f}\nAccuracy: {accuracy:.4f}")
+            self.update_visualization(y_pred)
+
+        except Exception as e:
+            self.show_error(f"Error training Logistic Regression: {str(e)}")
+
+    def train_svm(self):
+        """Train and evaluate Support Vector Machine (SVM)"""
+        if self.X_train is None or self.y_train is None:
+            self.show_error("No dataset loaded! Please load a dataset first.")
+            return
+
+        try:
+            # GUI'den parametreleri al
+            svm_params = self.widgets_dict.get("Support Vector Machine", {})
+
+            model_type = svm_params["Model Type"].currentText() if "Model Type" in svm_params else "SVC (Classification)"
+            C_value = svm_params["C"].value() if "C" in svm_params else 1.0
+            kernel_value = svm_params["kernel"].currentText() if "kernel" in svm_params else "rbf"
+            degree_value = svm_params["degree"].value() if "degree" in svm_params else 3
+            selected_loss_SVC = svm_params["loss function for SVC"].currentText() if "loss function for SVC" in svm_params else "Cross-Entropy"
+            selected_loss_SVR = svm_params["loss function for SVR"].currentText() if "loss function for SVR" in svm_params else "MSE"
+            epsilon_value = svm_params["epsilon"].value() if "epsilon" in svm_params else 0.1
+
+            # Kullanıcının seçimine göre model oluştur
+            if model_type == "SVR (Regression)":
+                model = SVR(C=C_value, kernel=kernel_value, degree=degree_value, epsilon=epsilon_value, gamma="auto")
+            else:
+                model = SVC(C=C_value, kernel=kernel_value, degree=degree_value, probability=True)
+            self.current_model = model
+
+            model.fit(self.X_train, self.y_train.ravel())
+            y_pred = model.predict(self.X_test)
+            # Loss hesapla
+            if isinstance(model, SVC):
+                y_pred_prob = model.predict_proba(self.X_test)
+                # Seçili loss fonksiyonuna göre hesaplama yap
+                if "Cross-Entropy" in selected_loss_SVC:
+                    loss_value = log_loss(self.y_test, y_pred_prob)
+                    loss_name = "Cross-Entropy Loss"
+                else: # "Hinge" 
+                    # Hinge Loss için etiketlerin {-1, 1} olması gerekiyor
+                    y_test_hinge = np.where(self.y_test == 1, 1, -1)  
+                    y_decision = model.decision_function(self.X_test)  # Decision scores
+                    loss_value = hinge_loss(y_test_hinge, y_decision)
+                    loss_name = "Hinge Loss"
+                accuracy = accuracy_score(self.y_test, y_pred)  # Regresyon için doğruluk yerine R² skoru kullanılır
+            elif isinstance(model, SVR):
+                if "MSE" in selected_loss_SVR:
+                    loss_value = mean_squared_error(self.y_test, y_pred)
+                    loss_name = "Mean Squared Error"
+                elif "MAE" in selected_loss_SVR:
+                    loss_value = np.mean(np.abs(self.y_test - y_pred))
+                    loss_name = "Mean Absolute Error"
+                elif "Huber" in selected_loss_SVR:
+                    loss_value = np.mean(self.huber_loss(y_pred, self.y_test, delta=1.0))
+                    loss_name = "Huber Loss"
+                accuracy = r2_score(self.y_test, y_pred)
+
+            # Sonuçları GUI'ye yazdır
+            self.metrics_text.setText(f"{loss_name}: {loss_value:.4f}\nAccuracy : {accuracy:.4f}")
+            self.update_visualization(y_pred)
+
+        except Exception as e:
+            self.show_error(f"Error training SVM: {str(e)}")
+
+    def train_gaussian_nb(self):
+        """Train and evaluate GaussianNB"""
+        if self.X_train is None or self.y_train is None:
+            self.show_error("No dataset loaded! Please load a dataset first.")
+            return
+
+        try:
+            # GUI üzerinden parametreleri alın
+            nb_params = self.widgets_dict.get("Naive Bayes", {})
+            var_smoothing = nb_params["var_smoothing"].value()
+            prior_selection = nb_params["Prior Probabilities"].currentText()
+
+            # Eğer kullanıcı User-defined seçerse, ek input al
+            if prior_selection == "User-defined":
+                priors_str, ok = QInputDialog.getText(self, "Input Priors",
+                                                      "Enter prior probabilities (comma separated):")
+                if ok and priors_str:
+                    try:
+                        priors = list(map(float, priors_str.split(',')))
+                    except Exception as conv_e:
+                        self.show_error(f"Error parsing prior probabilities: {str(conv_e)}")
+                        return
+                else:
+                    self.show_error("No prior probabilities entered. Using uniform distribution.")
+                    priors = None
+            else:
+                priors = None
+
+            #class sayısını  printle
+            # print("Class Count: ", np.unique(self.y_train, return_counts=True))
+
+            # GaussianNB modelini oluştur ve eğit
+            model = GaussianNB(var_smoothing=var_smoothing, priors=priors)
+            self.current_model = model
+            model.fit(self.X_train, self.y_train)
+            y_pred = model.predict(self.X_test)
+
+            # Model başarımını hesapla ve sonuçları göster
+            accuracy = accuracy_score(self.y_test, y_pred)
+            self.metrics_text.setText(f"GaussianNB Accuracy: {accuracy:.4f}")
+
+            # Görselleştirmeyi güncelle
+            self.update_visualization(y_pred)
+
+        except Exception as e:
+            self.show_error(f"Error training GaussianNB: {str(e)}")
+
+    def apply_missing_value_strategy(self):
+        """Apply missing value handling strategy to the dataset and ensure no NaN remains."""
+        strategy = self.imputation_combo.currentText()
+
+        try:
+            X_train_df = pd.DataFrame(self.X_train)
+            X_test_df = pd.DataFrame(self.X_test)
+            Y_train_df = pd.DataFrame(self.y_train)
+            Y_test_df = pd.DataFrame(self.y_test)
+
+            if strategy == "Mean Imputation":
+                imputer = SimpleImputer(strategy='mean')
+                X_train_df = pd.DataFrame(imputer.fit_transform(X_train_df), columns=X_train_df.columns)
+                X_test_df = pd.DataFrame(imputer.transform(X_test_df), columns=X_test_df.columns)
+                Y_train_df = pd.DataFrame(imputer.fit_transform(Y_train_df), columns=Y_train_df.columns)
+                Y_test_df = pd.DataFrame(imputer.transform(Y_test_df), columns=Y_test_df.columns)
+            elif strategy == "Median Imputation":
+                imputer = SimpleImputer(strategy='median')
+                X_train_df = pd.DataFrame(imputer.fit_transform(X_train_df), columns=X_train_df.columns)
+                X_test_df = pd.DataFrame(imputer.transform(X_test_df), columns=X_test_df.columns)
+                Y_train_df = pd.DataFrame(imputer.fit_transform(Y_train_df), columns=Y_train_df.columns)
+                Y_test_df = pd.DataFrame(imputer.transform(Y_test_df), columns=Y_test_df.columns)
+            elif strategy == "Mode Imputation":
+                imputer = SimpleImputer(strategy='most_frequent')
+                X_train_df = pd.DataFrame(imputer.fit_transform(X_train_df), columns=X_train_df.columns)
+                X_test_df = pd.DataFrame(imputer.transform(X_test_df), columns=X_test_df.columns)
+                Y_train_df = pd.DataFrame(imputer.fit_transform(Y_train_df), columns=Y_train_df.columns)
+                Y_test_df = pd.DataFrame(imputer.transform(Y_test_df), columns=Y_test_df.columns)
+            elif strategy == "Interpolation":
+                X_train_df = X_train_df.interpolate().fillna(method='bfill').fillna(method='ffill')
+                X_test_df = X_test_df.interpolate().fillna(method='bfill').fillna(method='ffill')
+                Y_train_df = Y_train_df.interpolate().fillna(method='bfill').fillna(method='ffill')
+                Y_test_df = Y_test_df.interpolate().fillna(method='bfill').fillna(method='ffill')
+            elif strategy == "Forward Fill":
+                X_train_df = X_train_df.fillna(method='ffill').fillna(method='bfill')
+                X_test_df = X_test_df.fillna(method='ffill').fillna(method='bfill')
+                Y_train_df = Y_train_df.fillna(method='ffill').fillna(method='bfill')
+                Y_test_df = Y_test_df.fillna(method='ffill').fillna(method='bfill')
+            elif strategy == "Backward Fill":
+                X_train_df = X_train_df.fillna(method='bfill').fillna(method='ffill')
+                X_test_df = X_test_df.fillna(method='bfill').fillna(method='ffill')
+                Y_train_df = Y_train_df.fillna(method='bfill').fillna(method='ffill')
+                Y_test_df = Y_test_df.fillna(method='bfill').fillna(method='ffill')
+            elif strategy == "No Imputation":
+                # Eğer 'No Imputation' seçilmişse NaN değerleri olduğu gibi bırakıyor.
+                # Ancak, burada da son kontrol yaparak eksik değerleri doldurabilirsiniz.
+                pass
+            
+            # Verileri geri ata (y_train ve y_test için numpy array)
+            self.X_train = X_train_df.values
+            self.X_test = X_test_df.values
+            self.y_train = Y_train_df.values
+            self.y_test = Y_test_df.values
+
+        except Exception as e:
+            self.show_error(f"Error during missing value processing: {str(e)}")
+
 
 def main():
     """Main function to start the application"""

@@ -4,43 +4,19 @@
 
 ---
 
-## 🚀 Overview
-
-This repository provides a base GUI framework for students to develop and integrate machine learning methods. The GUI is built using PyQt6 and supports various classical machine learning and deep learning techniques. Students will extend this GUI by adding necessary functionalities over time.
-
----
-
-## 📚 Long-Term Homework Instructions
-
-Students are required to modify and enhance this GUI incrementally every three weeks. The objective is to build a fully functional and improved machine learning GUI.
-
-### 🎯 Key Requirements:
-
-*   **Insert Necessary Methods:** Integrate missing machine learning methods within the provided GUI framework.
-*   **Enhance the GUI:** The default interface is provided, but students are encouraged to improve usability and design.
-*   **Ensure Data and Method Appropriateness:** The datasets and algorithms should be compatible within the GUI structure.
-*   **Implement Training and Testing Processes:** Correctly implement model training and evaluation workflows.
-*   **Regular Submissions:** Submit updates every three weeks through Google Classroom for this course.
-
----
-
-## 🤝 Repository and Collaboration
-
-Students should fork this repository and develop their versions.
-
-Regular commits and documentation updates are expected.
-
----
-
 ## 🏁 Getting Started
 
-### ⚙️ Prerequisites:
+1. Before uploading any data, **Scaling**, **Test Split**, and **Missing Value Method** should be configured after launching the GUI.  
+2. Select the dataset you want to upload. If a custom dataset is to be used, first click on **"Load Custom Dataset"**, then click on **"Load Data"**.  
+3. If the data is successfully loaded, a **"Loaded..."** message will appear at the bottom left.  
+4. After the data is loaded, click **"Visualize Data"** to view the dataset.  
+5. Once the data is visualized, set the desired parameters for the chosen method.  
+6. After confirming the parameter settings, click the **"Train"** button for the selected model.  
+7. If no errors occur during training, the training output will be displayed on the second screen, 
+    and the **loss** and **accuracy scores** will be shown on the right side of the screen.  
+8. If you want to perform another training session, you need to repeat all the steps starting from step 1.
 
-Ensure you have the following installed:
+**Note:** The **SVR (Support Vector Regression)** parameters within the SVM module must be carefully configured. Otherwise, the training may take an extremely long time or the program may enter an infinite loop and never complete.
 
-*   Python 3.8+
-
-### 📦 Required dependencies:
-
-```bash
-pip install numpy pandas matplotlib PyQt6 scikit-learn tensorflow torch torchvision torchaudio opencv-python opencv-contrib-python scipy fastai kornia
+**Note:** If the uploaded dataset contains **NaN** values and no missing value strategy is applied, a training error will occur.
+**Note:** If **Scaling**, **Test Split**, and **Missing Value Method**  is changed, the dataset must be reloaded.
