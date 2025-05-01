@@ -12,6 +12,7 @@ import matplotlib.pyplot as plt
 from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
 from matplotlib.figure import Figure
 from sklearn import datasets, preprocessing, model_selection
+from sklearn.model_selection import cross_validate, train_test_split, KFold
 from sklearn.discriminant_analysis import LinearDiscriminantAnalysis
 from sklearn.linear_model import LinearRegression, LogisticRegression
 from sklearn.naive_bayes import GaussianNB
@@ -22,11 +23,12 @@ from sklearn.neighbors import KNeighborsClassifier
 from sklearn.cluster import KMeans
 from sklearn.decomposition import PCA
 from sklearn.manifold import TSNE
-from sklearn.metrics import accuracy_score, mean_squared_error,mean_absolute_error, confusion_matrix, log_loss, hinge_loss, r2_score
+from sklearn.metrics import accuracy_score, mean_squared_error,mean_absolute_error, confusion_matrix, log_loss, hinge_loss, r2_score, make_scorer,silhouette_score, calinski_harabasz_score, davies_bouldin_score
 import tensorflow as tf
 from tensorflow.keras import layers, models, optimizers # type: ignore
 from sklearn.impute import SimpleImputer
 import umap
+import plotly.express as px
 
 
 class MLCourseGUI(QMainWindow):
@@ -55,6 +57,7 @@ class MLCourseGUI(QMainWindow):
         self.create_tabs()
         self.create_visualization()
         self.create_status_bar()
+
     def load_dataset(self):
         """Load selected dataset"""
         try:
@@ -79,13 +82,16 @@ class MLCourseGUI(QMainWindow):
                 self.status_bar.showMessage(f"Loaded {dataset_name}")
                 return
             
+            self.data = data.data       # tüm örnekler, tüm özellikler
+            self.targets = data.target  # tüm etiketler
             # Split data
             test_size = self.split_spin.value()
             self.X_train, self.X_test, self.y_train, self.y_test = \
                 model_selection.train_test_split(data.data, data.target, 
                                               test_size=test_size, 
                                               random_state=42)
-            
+
+
             # Apply scaling if selected
             self.apply_missing_value_strategy()
             self.apply_scaling()
@@ -213,6 +219,8 @@ class MLCourseGUI(QMainWindow):
         self.split_spin.setRange(0.01, 0.9)
         self.split_spin.setValue(0.1)
         self.split_spin.setSingleStep(0.1)
+
+        
         
         # Eksik veri işleme seçenekleri
         self.imputation_combo = QComboBox()
@@ -353,6 +361,57 @@ class MLCourseGUI(QMainWindow):
         classification_group.setLayout(classification_layout)
         layout.addWidget(classification_group, 0, 1)
         
+        # === Model Evaluation Bölümü ===
+        eval_group = QGroupBox("Model Evaluation (Validation/Test)")
+        eval_layout = QVBoxLayout()
+
+        # Seçim: K-Fold vs. Manual Split
+        self.eval_mode_combo = QComboBox()
+        self.eval_mode_combo.addItems([
+            "K-Fold Cross-Validation",
+            "Manual Train/Val/Test Split"
+        ])
+        eval_layout.addWidget(QLabel("Evaluation Mode:"))
+        eval_layout.addWidget(self.eval_mode_combo)
+    
+        # K-Fold için k değeri
+        self.eval_k_spin = QSpinBox()
+        self.eval_k_spin.setRange(2, 20)
+        self.eval_k_spin.setValue(5)
+        eval_layout.addWidget(QLabel("Number of folds (k):"))
+        eval_layout.addWidget(self.eval_k_spin)
+    
+        # Manual split için oran
+        self.eval_split_combo = QComboBox()
+        self.eval_split_combo.addItems([
+            "70-15-15",
+            "80-10-10",
+            "60-20-20"
+        ])
+        eval_layout.addWidget(QLabel("Train/Val/Test Ratio:"))
+        eval_layout.addWidget(self.eval_split_combo)
+
+        model_select_label = QLabel("Select Model for Evaluation:")
+        self.eval_model_combo = QComboBox()
+        self.eval_model_combo.addItems([
+            "Linear Regression",
+            "Logistic Regression",
+            "Naive Bayes",
+            "Support Vector Machine"
+        ])
+        eval_layout.addWidget(model_select_label)
+        eval_layout.addWidget(self.eval_model_combo)
+
+    
+        # Çalıştırma butonu
+        eval_btn = QPushButton("Run Evaluation")
+        eval_btn.clicked.connect(self.run_model_evaluation)
+        eval_layout.addWidget(eval_btn)
+    
+        eval_group.setLayout(eval_layout)
+        layout.addWidget(eval_group, 1, 0, 1, 2)  # 2 sütunluk grid’de alt satır
+        
+    
         return widget
     
     def create_dim_reduction_usl_tab(self):
@@ -428,7 +487,15 @@ class MLCourseGUI(QMainWindow):
         kmeans_train_layout.addWidget(QLabel("Max number of clusters (k):"))
         kmeans_train_layout.addWidget(self.kmeans_max_k)
         kmeans_train_layout.addWidget(kmeans_btn)
+
+        # ---- Quality Metrics ----
+        quality_btn = QPushButton("Show Clustering Quality Metrics")
+        quality_btn.clicked.connect(self.show_kmeans_quality_metrics)
+        kmeans_train_layout.addWidget(quality_btn)
+
         kmeans_train_group.setLayout(kmeans_train_layout)
+
+
 
         # === Ana Layout'a Ekle ===
         layout.addWidget(pca_group)
@@ -451,11 +518,24 @@ class MLCourseGUI(QMainWindow):
                 "n_components": "int"
             }
         )
-
+        
         lda_layout.addWidget(lda_params)
         lda_group.setLayout(lda_layout)
 
         layout.addWidget(lda_group)
+
+        # === Manual 1D Projection From Given Covariance ===
+        manual_group = QGroupBox("Manual 1D Projection (From Covariance Matrix)")
+        manual_layout = QVBoxLayout()
+
+        manual_proj_btn = QPushButton("Project using eigenvector of Σ = [[5, 2], [2, 3]]")
+        manual_proj_btn.clicked.connect(self.manual_covariance_projection)
+
+        manual_layout.addWidget(manual_proj_btn)
+        manual_group.setLayout(manual_layout)
+        layout.addWidget(manual_group)
+        
+
         return widget
     
     def create_rl_tab(self):
@@ -568,12 +648,7 @@ class MLCourseGUI(QMainWindow):
             "Logistic Regression": self.train_logistic_regression,
             "Naive Bayes": self.train_gaussian_nb,
             "Support Vector Machine": self.train_svm,
-            # "Decision Tree": lambda: self.train_model("Decision Tree"),
-            # "Random Forest": lambda: self.train_model("Random Forest"),
-            # "K-Nearest Neighbors": lambda: self.train_model("K-Nearest Neighbors"),
-            # "K-Means Clustering": lambda: self.train_model("K-Means Clustering"),
             "PCA Parameters": self.train_pca_and_plot_variance,
-            # "KMeans - Add Cluster Labels to Dataset": self.train_kmeans_and_add_cluster_feature,
             "LDA Parameters": self.train_lda_and_show_separation
         }
 
@@ -1477,6 +1552,7 @@ class MLCourseGUI(QMainWindow):
             return
 
         try:
+            
             max_k = self.kmeans_max_k.value()
             wcss = []
 
@@ -1484,6 +1560,10 @@ class MLCourseGUI(QMainWindow):
                 kmeans = KMeans(n_clusters=k, random_state=42, n_init='auto')
                 kmeans.fit(self.X_train)
                 wcss.append(kmeans.inertia_)  # inertia_ = WCSS
+
+            # self.last_kmeans, self.last_X ve self.last_y'nin setlendiğinden emin olunmalı
+            self.last_kmeans = kmeans
+            self.last_X = self.X_train
 
             # Elbow grafiği çiz
             fig = Figure(figsize=(6, 4))
@@ -1627,6 +1707,134 @@ class MLCourseGUI(QMainWindow):
         except Exception as e:
             self.show_error(f"LDA failed: {str(e)}")
 
+    def manual_covariance_projection(self):
+        if self.X_train is None:
+            self.show_error("Please load a dataset first.")
+            return
+
+        try:
+            # Sabit kovaryans matrisi
+            Sigma = np.array([[5, 2],
+                              [2, 3]])
+
+            # Özdeğerler ve özvektörler
+            eigvals, eigvecs = np.linalg.eig(Sigma)
+            principal_vector = eigvecs[:, np.argmax(eigvals)]
+
+            # Sadece ilk iki özniteliği kullanarak projeksiyon yapıyoruz (X_train[:, :2])
+            X_proj = self.X_train[:, :2] @ principal_vector.reshape(-1, 1)
+
+            # X_train ve X_test'i projekte et
+            self.X_train = self.X_train[:, :2] @ principal_vector.reshape(-1, 1)
+            self.X_test = self.X_test[:, :2] @ principal_vector.reshape(-1, 1)
+
+            # Grafik
+            fig = Figure(figsize=(6, 4))
+            ax = fig.add_subplot(111)
+            ax.scatter(X_proj[:, 0], np.zeros_like(X_proj), c=self.y_train, cmap='viridis', edgecolor='k')
+            ax.set_title("1D Projection using Σ Eigenvector")
+            ax.set_xlabel("Projected Coordinate")
+            ax.get_yaxis().set_visible(False)
+
+            # Metin
+            metrics = "Manual projection using dominant eigenvector of Σ = [[5, 2], [2, 3]]\n"
+            metrics += f"Principal eigenvector: [{principal_vector[0]:.3f}, {principal_vector[1]:.3f}]\n"
+            metrics += f"Corresponding eigenvalue: {eigvals[np.argmax(eigvals)]:.3f}\n"
+            metrics += "\nData has been projected to 1D and stored in self.X_train/self.X_test."
+
+            self.show_projection_window(fig, metrics, title="Manual 1D Projection")
+
+            self.status_bar.showMessage("Manual projection applied using fixed covariance matrix.")
+
+        except Exception as e:
+            self.show_error(f"Manual projection failed: {str(e)}")
+
+    def run_model_evaluation(self):
+        if not hasattr(self, "data") or self.data is None:
+            self.show_error("Please load a dataset first.")
+            return
+
+        # Özellik ve hedef
+        X, y = self.data, self.targets.ravel()
+
+        # Seçilen model
+        model_name = self.eval_model_combo.currentText()
+        if model_name == "Linear Regression":
+            model = LinearRegression(fit_intercept=True)
+        elif model_name == "Logistic Regression":
+            model = LogisticRegression(max_iter=1000)
+        elif model_name == "Naive Bayes":
+            model = GaussianNB()
+        elif model_name == "Support Vector Machine":
+            model = SVC(probability=True)
+        else:
+            self.show_error("Please select a valid model first.")
+            return
+
+
+        mode = self.eval_mode_combo.currentText()
+        msg = ""
+
+        # --- K-Fold CV ---
+        if mode == "K-Fold Cross-Validation":
+            k = self.eval_k_spin.value()
+            scoring = {
+                "accuracy": "accuracy",
+                "mse": "neg_mean_squared_error",
+                "rmse": make_scorer(lambda yt, yp: mean_squared_error(yt, yp))
+            }
+            results = cross_validate(model, X, y, cv=k, scoring=scoring)
+            msg += f"{k}-Fold CV Results:\n"
+            for met, score in scoring.items():
+                vals = results[f"test_{met}"]
+                if met == "mse": vals = -vals
+                msg += f"{met.upper():6}: {vals.mean():.4f} ± {vals.std():.4f}\n"
+
+        # --- Manual Split ---
+        else:
+            train_pct, val_pct, test_pct = map(int, self.eval_split_combo.currentText().split("-"))
+            ts = (val_pct + test_pct) / 100
+            X_temp, X_test, y_temp, y_test = train_test_split(X, y, test_size=ts, random_state=42)
+            val_ratio = val_pct / (val_pct + test_pct)
+            X_train, X_val, y_train, y_val = train_test_split(X_temp, y_temp, test_size=val_ratio, random_state=42)
+
+            model.fit(X_train, y_train)
+            y_pred = model.predict(X_val)
+            acc = accuracy_score(y_val, y_pred)
+            mse = mean_squared_error(y_val, y_pred)
+            rmse = mean_squared_error(y_val, y_pred)
+            msg += f"Split {train_pct}-{val_pct}-{test_pct} Results:\n"
+            msg += f"ACCURACY: {acc:.4f}\nMSE: {mse:.4f}\nRMSE: {rmse:.4f}\n"
+
+        self.metrics_text.setText(msg)
+        self.status_bar.showMessage("Evaluation completed.")
+
+    def show_kmeans_quality_metrics(self):
+        # self.last_kmeans, self.last_X ve self.last_y'nin setlendiğinden emin olun!
+        if not hasattr(self, "last_kmeans"):
+            self.show_error("Please run KMeans first (elbow or training).")
+            return
+
+        X = self.last_X
+        labels = self.last_kmeans.labels_
+
+        from sklearn.metrics import (
+            silhouette_score,
+            calinski_harabasz_score,
+            davies_bouldin_score
+        )
+
+        sil = silhouette_score(X, labels)
+        ch  = calinski_harabasz_score(X, labels)
+        db  = davies_bouldin_score(X, labels)
+
+        msg = (
+            f"Clustering Quality Metrics (k = {self.last_kmeans.n_clusters}):\n\n"
+            f"Silhouette Score:       {sil:.4f}\n"
+            f"Calinski-Harabasz Index:{ch:.4f}\n"
+            f"Davies-Bouldin Score:   {db:.4f}"
+        )
+        QMessageBox.information(self, "KMeans Quality Metrics", msg)
 def main():
     """Main function to start the application"""
     app = QApplication(sys.argv)
