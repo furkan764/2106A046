@@ -20,3 +20,32 @@
 
 **Note:** If the uploaded dataset contains **NaN** values and no missing value strategy is applied, a training error will occur.
 **Note:** If **Scaling**, **Test Split**, and **Missing Value Method**  is changed, the dataset must be reloaded.
+## 🆕 New Implementations
+
+Since the initial version, the following features have been added and integrated into the GUI:
+
+### 1. Data Splitting & Validation
+- **Train/Validation/Test Split** options: 70–15–15, 80–10–10, 60–20–20  
+- **K-Fold Cross-Validation** (user-selectable k between 2 and 20)  
+- Combined **“Model Evaluation”** panel with a single dropdown to choose between manual split and k-fold  
+- Automatic calculation and reporting of **accuracy**, **MSE**, and **RMSE**  
+
+### 2. Supervised Dimensionality Reduction (SL Tab)
+- **Linear Discriminant Analysis (LDA)** with user-selectable `n_components`  
+- Visualization in 2D/3D scatter plots  
+
+### 3. Unsupervised Dimensionality Reduction (USL Tab)
+- **Principal Component Analysis (PCA)** with `n_components` and `whiten` options  
+- **t-SNE** and **UMAP** projections with tunable `n_components` and `perplexity`  
+- **Manual 1D Projection** from a fixed covariance matrix (Σ = [[5,2],[2,3]])  
+
+### 4. Clustering Analysis
+- **KMeans**:
+  - “Train KMeans and Add Cluster Feature” adds cluster labels to dataset  
+  - **Elbow method** (max_k configurable) with WCSS plot  
+  - **Show Clustering Quality Metrics** button computing Silhouette, Calinski–Harabasz, and Davies–Bouldin scores  
+
+**Note** Be careful about packages. You may need to download 
+pip install umap
+pip install umap-learn
+pip install plotly
