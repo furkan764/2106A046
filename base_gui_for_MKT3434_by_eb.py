@@ -12,6 +12,7 @@ import matplotlib.pyplot as plt
 from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
 from matplotlib.figure import Figure
 from sklearn import datasets, preprocessing, model_selection
+from sklearn.discriminant_analysis import LinearDiscriminantAnalysis
 from sklearn.linear_model import LinearRegression, LogisticRegression
 from sklearn.naive_bayes import GaussianNB
 from sklearn.svm import SVC, SVR
@@ -20,10 +21,12 @@ from sklearn.ensemble import RandomForestClassifier
 from sklearn.neighbors import KNeighborsClassifier
 from sklearn.cluster import KMeans
 from sklearn.decomposition import PCA
+from sklearn.manifold import TSNE
 from sklearn.metrics import accuracy_score, mean_squared_error,mean_absolute_error, confusion_matrix, log_loss, hinge_loss, r2_score
 import tensorflow as tf
 from tensorflow.keras import layers, models, optimizers # type: ignore
 from sklearn.impute import SimpleImputer
+import umap
 
 
 class MLCourseGUI(QMainWindow):
@@ -52,7 +55,6 @@ class MLCourseGUI(QMainWindow):
         self.create_tabs()
         self.create_visualization()
         self.create_status_bar()
-
     def load_dataset(self):
         """Load selected dataset"""
         try:
@@ -250,8 +252,10 @@ class MLCourseGUI(QMainWindow):
         tabs = [
             ("Classical ML", self.create_classical_ml_tab),
             ("Deep Learning", self.create_deep_learning_tab),
-            ("Dimensionality Reduction", self.create_dim_reduction_tab),
-            ("Reinforcement Learning", self.create_rl_tab)
+            ("Dimensionality Reduction (USL)", self.create_dim_reduction_usl_tab),
+            ("Dimensionality Reduction (SL)", self.create_dim_reduction_sl_tab),
+            ("Reinforcement Learning", self.create_rl_tab),
+            ("Projection Analysis", self.create_projection_analysis_tab),
         ]
         
         for tab_name, create_func in tabs:
@@ -351,40 +355,107 @@ class MLCourseGUI(QMainWindow):
         
         return widget
     
-    def create_dim_reduction_tab(self):
-        """Create the dimensionality reduction tab"""
+    def create_dim_reduction_usl_tab(self):
         widget = QWidget()
-        layout = QGridLayout(widget)
-        
-        # K-Means section
-        kmeans_group = QGroupBox("K-Means Clustering")
-        kmeans_layout = QVBoxLayout()
-        
-        kmeans_params = self.create_algorithm_group(
-            "K-Means Parameters",
-            {"n_clusters": "int",
-             "max_iter": "int",
-             "n_init": "int"}
-        )
-        kmeans_layout.addWidget(kmeans_params)
-        
-        kmeans_group.setLayout(kmeans_layout)
-        layout.addWidget(kmeans_group, 0, 0)
-        
-        # PCA section
-        pca_group = QGroupBox("Principal Component Analysis")
+        layout = QVBoxLayout(widget)
+
+        # === PCA Bölümü ===
+        pca_group = QGroupBox("Principal Component Analysis (PCA)")
         pca_layout = QVBoxLayout()
-        
+
+        # Parametre alanlarını widget olarak oluştur
         pca_params = self.create_algorithm_group(
             "PCA Parameters",
-            {"n_components": "int",
-             "whiten": "checkbox"}
+            {
+                "n_components": "int",
+                "whiten": "checkbox"
+            }
         )
         pca_layout.addWidget(pca_params)
-        
         pca_group.setLayout(pca_layout)
-        layout.addWidget(pca_group, 0, 1)
+
+
+        # === t-SNE / UMAP Bölümü ===
+        tsne_umap_group = QGroupBox("t-SNE / UMAP Projections")
+        proj_layout = QVBoxLayout()
+
+        self.proj_method_combo = QComboBox()
+        self.proj_method_combo.addItems(["t-SNE", "UMAP"])
+
+        self.proj_n_components = QSpinBox()
+        self.proj_n_components.setRange(1, 5)
+        self.proj_n_components.setValue(2)
+
+        self.proj_perplexity = QDoubleSpinBox()
+        self.proj_perplexity.setRange(5, 100)
+        self.proj_perplexity.setValue(30)
+
+        proj_train_btn = QPushButton("Run Projection")
+        proj_train_btn.clicked.connect(self.run_tsne_or_umap_projection)  
+
+        proj_layout.addWidget(QLabel("Method:"))
+        proj_layout.addWidget(self.proj_method_combo)
+        proj_layout.addWidget(QLabel("n_components:"))
+        proj_layout.addWidget(self.proj_n_components)
+        proj_layout.addWidget(QLabel("Perplexity (for t-SNE only):"))
+        proj_layout.addWidget(self.proj_perplexity)
+        proj_layout.addWidget(proj_train_btn)
+        tsne_umap_group.setLayout(proj_layout)
         
+        # === KMeans Parametrik Eğitim ===
+        kmeans_train_group = QGroupBox("KMeans - Add Cluster Labels to Dataset")
+        kmeans_train_layout = QVBoxLayout()
+
+        self.kmeans_n_clusters = QSpinBox()
+        self.kmeans_n_clusters.setRange(1, 20)
+        self.kmeans_n_clusters.setValue(3)
+
+        kmeans_train_btn = QPushButton("Train KMeans and Add Cluster Feature")
+        kmeans_train_btn.clicked.connect(self.train_kmeans_and_add_cluster_feature)
+
+        kmeans_train_layout.addWidget(QLabel("Number of Clusters (k):"))
+        kmeans_train_layout.addWidget(self.kmeans_n_clusters)
+        kmeans_train_layout.addWidget(kmeans_train_btn)
+        # kmeans_train_group.setLayout(kmeans_train_layout)
+
+        self.kmeans_max_k = QSpinBox()
+        self.kmeans_max_k.setRange(1, 20)
+        self.kmeans_max_k.setValue(10)
+
+        kmeans_btn = QPushButton("Run KMeans & Show Elbow Graph")
+        kmeans_btn.clicked.connect(self.run_kmeans_and_plot_elbow)  
+
+        kmeans_train_layout.addWidget(QLabel("Max number of clusters (k):"))
+        kmeans_train_layout.addWidget(self.kmeans_max_k)
+        kmeans_train_layout.addWidget(kmeans_btn)
+        kmeans_train_group.setLayout(kmeans_train_layout)
+
+        # === Ana Layout'a Ekle ===
+        layout.addWidget(pca_group)
+        layout.addWidget(tsne_umap_group)
+        layout.addWidget(kmeans_train_group)
+
+        return widget
+
+    def create_dim_reduction_sl_tab(self):
+        widget = QWidget()
+        layout = QVBoxLayout(widget)
+
+        # === LDA Parametre Grubu ===
+        lda_group = QGroupBox("Linear Discriminant Analysis (LDA)")
+        lda_layout = QVBoxLayout()
+
+        lda_params = self.create_algorithm_group(
+            "LDA Parameters",
+            {
+                "n_components": "int"
+            }
+        )
+
+        lda_layout.addWidget(lda_params)
+        lda_group.setLayout(lda_layout)
+
+        layout.addWidget(lda_group)
         return widget
     
     def create_rl_tab(self):
@@ -501,7 +572,9 @@ class MLCourseGUI(QMainWindow):
             # "Random Forest": lambda: self.train_model("Random Forest"),
             # "K-Nearest Neighbors": lambda: self.train_model("K-Nearest Neighbors"),
             # "K-Means Clustering": lambda: self.train_model("K-Means Clustering"),
-            # "PCA": lambda: self.train_model("PCA")
+            "PCA Parameters": self.train_pca_and_plot_variance,
+            # "KMeans - Add Cluster Labels to Dataset": self.train_kmeans_and_add_cluster_feature,
+            "LDA Parameters": self.train_lda_and_show_separation
         }
 
         # Eğitme butonu ekleyelim ve fonksiyona bağlayalım
@@ -1241,6 +1314,318 @@ class MLCourseGUI(QMainWindow):
         except Exception as e:
             self.show_error(f"Error during missing value processing: {str(e)}")
 
+    def create_projection_analysis_tab(self):
+        widget = QWidget()
+        layout = QVBoxLayout(widget)
+
+        # === Supervised Projection Section ===
+        supervised_group = QGroupBox("Supervised Projections (LDA)")
+        supervised_layout = QVBoxLayout()
+
+        self.lda_n_components = QSpinBox()
+        self.lda_n_components.setRange(1, 100)
+        self.lda_n_components.setValue(2)
+
+        train_lda_btn = QPushButton("Train & Visualize LDA")
+        # Bağlantı sonra yapılacak: train_lda_btn.clicked.connect(...)
+
+        supervised_layout.addWidget(QLabel("Number of Components (LDA):"))
+        supervised_layout.addWidget(self.lda_n_components)
+        supervised_layout.addWidget(train_lda_btn)
+        supervised_group.setLayout(supervised_layout)
+
+        # === Unsupervised Projection Section ===
+        unsupervised_group = QGroupBox("Unsupervised Projections")
+        unsup_layout = QVBoxLayout()
+
+        self.unsup_method_combo = QComboBox()
+        self.unsup_method_combo.addItems(["PCA", "t-SNE", "UMAP", "KMeans"])
+        self.unsup_method_combo.currentTextChanged.connect(self.update_unsupervised_params)
+
+        self.unsup_param_area = QVBoxLayout()
+
+        train_unsup_btn = QPushButton("Train / Visualize")
+        # Bağlantı sonra yapılacak: train_unsup_btn.clicked.connect(...)
+
+        unsup_layout.addWidget(QLabel("Select Method:"))
+        unsup_layout.addWidget(self.unsup_method_combo)
+        unsup_layout.addLayout(self.unsup_param_area)
+        unsup_layout.addWidget(train_unsup_btn)
+        unsupervised_group.setLayout(unsup_layout)
+
+        # === Visualization and Metrics ===
+        viz_group = QGroupBox("Projection Output")
+        viz_layout = QHBoxLayout()
+
+        self.projection_figure = Figure(figsize=(5, 4))
+        self.projection_canvas = FigureCanvas(self.projection_figure)
+
+        self.projection_metrics = QTextEdit()
+        self.projection_metrics.setReadOnly(True)
+        self.projection_metrics.setMaximumWidth(250)
+
+        viz_layout.addWidget(self.projection_canvas)
+        viz_layout.addWidget(self.projection_metrics)
+        viz_group.setLayout(viz_layout)
+
+        # === Add to Layout ===
+        layout.addWidget(supervised_group)
+        layout.addWidget(unsupervised_group)
+        layout.addWidget(viz_group)
+
+        return widget
+
+    def update_unsupervised_params(self):
+        # Clear previous param widgets
+        for i in reversed(range(self.unsup_param_area.count())):
+            widget = self.unsup_param_area.itemAt(i).widget()
+            if widget:
+                widget.setParent(None)
+
+        method = self.unsup_method_combo.currentText()
+        self.unsup_params = {}  # store inputs
+
+        if method in ["PCA", "UMAP", "t-SNE"]:
+            comp_spin = QSpinBox()
+            comp_spin.setRange(1, 100)
+            comp_spin.setValue(2)
+            self.unsup_param_area.addWidget(QLabel("n_components"))
+            self.unsup_param_area.addWidget(comp_spin)
+            self.unsup_params["n_components"] = comp_spin
+
+        if method == "t-SNE":
+            perp_spin = QDoubleSpinBox()
+            perp_spin.setRange(5, 100)
+            perp_spin.setValue(30)
+            self.unsup_param_area.addWidget(QLabel("Perplexity"))
+            self.unsup_param_area.addWidget(perp_spin)
+            self.unsup_params["perplexity"] = perp_spin
+
+        if method == "KMeans":
+            k_spin = QSpinBox()
+            k_spin.setRange(1, 50)
+            k_spin.setValue(3)
+            self.unsup_param_area.addWidget(QLabel("n_clusters"))
+            self.unsup_param_area.addWidget(k_spin)
+            self.unsup_params["n_clusters"] = k_spin
+
+    def show_projection_window(self, fig, metrics_text=None, title="Projection Result"):
+        dialog = QDialog(self)
+        dialog.setWindowTitle(title)
+        dialog.setMinimumSize(800, 600)
+
+        layout = QHBoxLayout(dialog)
+
+        canvas = FigureCanvas(fig)
+        layout.addWidget(canvas)
+
+        if metrics_text:
+            metrics_box = QTextEdit()
+            metrics_box.setReadOnly(True)
+            metrics_box.setText(metrics_text)
+            metrics_box.setMaximumWidth(250)
+            layout.addWidget(metrics_box)
+
+        dialog.exec()
+
+    def train_pca_and_plot_variance(self):
+        if self.X_train is None:
+            self.show_error("Please load a dataset first.")
+            return
+
+        try:
+            n_components = self.widgets_dict["PCA Parameters"]["n_components"].value()
+            whiten = self.widgets_dict["PCA Parameters"]["whiten"].isChecked()
+            pca = PCA(n_components=n_components, whiten=whiten)
+
+            X_train_pca = pca.fit_transform(self.X_train)
+            X_test_pca = pca.transform(self.X_test)
+
+            # Eğitime etki edecek şekilde değişkenleri güncelle
+            self.X_train = X_train_pca
+            self.X_test = X_test_pca
+            self.pca_model = pca  # isteğe bağlı olarak saklayabilirsin
+
+            # Varyans oranı
+            explained_var = pca.explained_variance_ratio_
+
+            # Grafik
+            fig = Figure(figsize=(6, 4))
+            ax = fig.add_subplot(111)
+            ax.bar(range(1, len(explained_var) + 1), explained_var * 100)
+            ax.set_xlabel("Component")
+            ax.set_ylabel("Explained Variance (%)")
+            ax.set_title("Explained Variance per PCA Component")
+            ax.set_ylim(0, 100)
+
+            # Metrik metni
+            metrics = f"PCA applied to training & test data.\n\nExplained Variance Ratio (Top {n_components}):\n"
+            metrics += "\n".join([f"Component {i+1}: {v:.2%}" for i, v in enumerate(explained_var)])
+
+            # Yeni pencerede göster
+            self.show_projection_window(fig, metrics, title="PCA Result")
+
+            # Status bar güncelle
+            self.status_bar.showMessage(f"PCA applied with {n_components} components")
+
+        except Exception as e:
+            self.show_error(f"PCA failed: {str(e)}")
+
+    def run_kmeans_and_plot_elbow(self):
+        if self.X_train is None:
+            self.show_error("Please load a dataset first.")
+            return
+
+        try:
+            max_k = self.kmeans_max_k.value()
+            wcss = []
+
+            for k in range(1, max_k + 1):
+                kmeans = KMeans(n_clusters=k, random_state=42, n_init='auto')
+                kmeans.fit(self.X_train)
+                wcss.append(kmeans.inertia_)  # inertia_ = WCSS
+
+            # Elbow grafiği çiz
+            fig = Figure(figsize=(6, 4))
+            ax = fig.add_subplot(111)
+            ax.plot(range(1, max_k + 1), wcss, marker='o')
+            ax.set_title("Elbow Method - KMeans Clustering")
+            ax.set_xlabel("Number of Clusters (k)")
+            ax.set_ylabel("WCSS (Inertia)")
+            ax.grid(True)
+
+            # Metrik metni
+            metrics = "WCSS values:\n"
+            metrics += "\n".join([f"k = {k}: {w:.2f}" for k, w in zip(range(1, max_k + 1), wcss)])
+
+            self.show_projection_window(fig, metrics, title="KMeans Elbow Method")
+
+            self.status_bar.showMessage(f"KMeans Elbow graph generated for k = 1 to {max_k}")
+
+        except Exception as e:
+            self.show_error(f"KMeans Elbow computation failed: {str(e)}")
+
+    def run_tsne_or_umap_projection(self):
+        if self.X_train is None or self.y_train is None:
+            self.show_error("Please load a dataset first.")
+            return
+
+        try:
+            method = self.proj_method_combo.currentText()
+            n_components = self.proj_n_components.value()
+            perplexity = self.proj_perplexity.value()
+
+            if method == "t-SNE":
+                model = TSNE(n_components=n_components, perplexity=perplexity, random_state=42)
+            elif method == "UMAP":
+                model = umap.UMAP(n_components=n_components, random_state=42)
+            else:
+                self.show_error("Unknown projection method.")
+                return
+
+            # Dönüşümü uygula
+            X_proj = model.fit_transform(self.X_train)
+
+            # Görsel oluştur
+            fig = Figure(figsize=(6, 5))
+            if n_components == 3:
+                ax = fig.add_subplot(111, projection='3d')
+                scatter = ax.scatter(
+                    X_proj[:, 0], X_proj[:, 1], X_proj[:, 2],
+                    c=self.y_train, cmap='viridis', edgecolor='k', s=50
+                )
+                ax.set_xlabel("Component 1")
+                ax.set_ylabel("Component 2")
+                ax.set_zlabel("Component 3")
+            else:
+                ax = fig.add_subplot(111)
+                scatter = ax.scatter(
+                    X_proj[:, 0], X_proj[:, 1],
+                    c=self.y_train, cmap='viridis', edgecolor='k', s=50
+                )
+                ax.set_xlabel("Component 1")
+                ax.set_ylabel("Component 2")
+                fig.colorbar(scatter, ax=ax)
+
+            ax.set_title(f"{method} Projection ({n_components}D)")
+            self.show_projection_window(fig, title=f"{method} Projection")
+
+            self.status_bar.showMessage(f"{method} projection completed.")
+
+        except Exception as e:
+            self.show_error(f"{method} projection failed: {str(e)}")
+
+    def train_kmeans_and_add_cluster_feature(self):
+        if self.X_train is None:
+            self.show_error("Please load a dataset first.")
+            return
+
+        try:
+            k = self.kmeans_n_clusters.value()
+
+            # KMeans modelini eğit
+            kmeans = KMeans(n_clusters=k, random_state=42, n_init='auto')
+            cluster_labels_train = kmeans.fit_predict(self.X_train)
+            cluster_labels_test = kmeans.predict(self.X_test)
+
+            # Cluster ID'leri yeni feature olarak veri setine ekle
+            self.X_train = np.column_stack((self.X_train, cluster_labels_train))
+            self.X_test = np.column_stack((self.X_test, cluster_labels_test))
+
+            # Bilgi mesajı
+            self.status_bar.showMessage(f"KMeans clustering applied with k = {k}. Cluster labels added to training and test data.")
+
+            # (İsteğe bağlı: kullanıcıya metin kutusu ile gösterim)
+            QMessageBox.information(self, "KMeans Completed", f"Cluster labels (k = {k}) have been added as a new feature.")
+
+        except Exception as e:
+            self.show_error(f"KMeans clustering failed: {str(e)}")
+
+    def train_lda_and_show_separation(self):
+        if self.X_train is None or self.y_train is None:
+            self.show_error("Please load a labeled dataset first.")
+            return
+        try:
+            n_components = self.widgets_dict["LDA Parameters"]["n_components"].value()
+            # LDA modeli uygula
+            lda = LinearDiscriminantAnalysis(n_components=n_components)
+            X_train_lda = lda.fit_transform(self.X_train, self.y_train)
+            X_test_lda = lda.transform(self.X_test)
+            # ✅ Eğitim için verileri güncelle
+            self.X_train = X_train_lda
+            self.X_test = X_test_lda
+            self.lda_model = lda  # İsteğe bağlı: ileride kullanmak istersen
+            # Scatter plot
+            fig = Figure(figsize=(6, 5))
+            if n_components == 3:
+                ax = fig.add_subplot(111, projection='3d')
+                scatter = ax.scatter(
+                    X_train_lda[:, 0], X_train_lda[:, 1], X_train_lda[:, 2],
+                    c=self.y_train, cmap='viridis', edgecolor='k', s=50
+                )
+                ax.set_xlabel("LD1")
+                ax.set_ylabel("LD2")
+                ax.set_zlabel("LD3")
+            else:
+                ax = fig.add_subplot(111)
+                scatter = ax.scatter(
+                    X_train_lda[:, 0],
+                    X_train_lda[:, 1] if n_components > 1 else np.zeros_like(X_train_lda[:, 0]),
+                    c=self.y_train, cmap='viridis', edgecolor='k', s=50
+                )
+                ax.set_xlabel("LD1")
+                if n_components > 1:
+                    ax.set_ylabel("LD2")
+                fig.colorbar(scatter, ax=ax)
+            ax.set_title(f"LDA Projection ({n_components}D)")
+            # Metin: Ayrım oranı
+            metrics = f"LDA projection has been applied to training & test data.\n\n"
+            metrics += f"Explained Variance Ratio:\n"
+            metrics += "\n".join([f"LD{i+1}: {v:.2%}" for i, v in enumerate(lda.explained_variance_ratio_)])
+            self.show_projection_window(fig, metrics, title="LDA Result")
+            self.status_bar.showMessage(f"LDA projection applied and data updated for training.")
+        except Exception as e:
+            self.show_error(f"LDA failed: {str(e)}")
 
 def main():
     """Main function to start the application"""
@@ -1251,4 +1636,3 @@ def main():
 
 if __name__ == '__main__':
     main()
-
