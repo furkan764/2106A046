@@ -20,6 +20,7 @@
 
 **Note:** If the uploaded dataset contains **NaN** values and no missing value strategy is applied, a training error will occur.
 **Note:** If **Scaling**, **Test Split**, and **Missing Value Method**  is changed, the dataset must be reloaded.
+
 ## 🆕 New Implementations
 
 Since the initial version, the following features have been added and integrated into the GUI:
@@ -45,7 +46,25 @@ Since the initial version, the following features have been added and integrated
   - **Elbow method** (max_k configurable) with WCSS plot  
   - **Show Clustering Quality Metrics** button computing Silhouette, Calinski–Harabasz, and Davies–Bouldin scores  
 
+
+## 🆕 New Implementations HW3
+
+### CNN, RNN, and MLP Training
+
+1. Follow the initial steps outlined in the **Getting Started** section.
+2. Add the appropriate layers for your desired training model under the **Deep Learning** tab.
+3. Click the **Train** button.
+4. The results will be displayed on the second screen.
+5. You can download the model by clicking the **Save Model** button.
+
+### Pretrained Model
+
+1. Under the **Deep Learning** tab, you can load a pretrained model.
+2. Once loaded, you can continue training the model with your desired dataset.
+
 **Note** Be careful about packages. You may need to download 
 pip install umap
 pip install umap-learn
 pip install plotly
+
+
